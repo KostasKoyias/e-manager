@@ -1,0 +1,13 @@
+#!/usr/bin/env xdg-open
+
+[Desktop Entry]
+Version=1.0
+Type=Application
+Terminal=true
+Icon[en_US]=/home/kostas/Git/Repos/web/e-manager/rsrc/logo.png
+Name[en_US]=e-manager
+Exec=/home/kostas/bin/start-app /home/kostas/.config/configstore/e-manager.conf
+Comment[en_US]=Manage all your resources with ease!
+Name=e-manager
+Comment=Manage all your resources with ease!
+Icon=/home/kostas/Git/Repos/web/e-manager/rsrc/logo.png

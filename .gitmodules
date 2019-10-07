@@ -1,0 +1,6 @@
+[submodule "e-manager_ui"]
+	path = e-manager_ui
+	url = https://github.com/KostasKoyias/e-manager_ui
+[submodule "e-manager_api"]
+	path = e-manager_api
+	url = https://github.com/KostasKoyias/e-manager_api

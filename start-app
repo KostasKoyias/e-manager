@@ -1,0 +1,214 @@
+#!/bin/bash
+
+### Define utility functions to maximize code re-usability on common operations ###
+
+function exit_message(){
+    echo -e "$1\nPress any key to close this window..."
+    read -n1
+    exit $2
+}
+
+# on exit, kill all processes we started in order to free ports & exit succesfully
+function exit_safely(){
+    echo -e "\nStopping other processes before exiting..."
+
+    for port in "${using_ports[@]}"
+    do
+        echo -e "\tStopping process listening on port: $port..."
+        fuser -k $port/tcp &> /dev/null
+    done
+
+    exit_message "Exiting now..." 1
+}
+
+# make sure a port is available before using it
+function is_port_available(){
+    if [ -z $1 ]
+    then
+        exit_message "\e[1;31mError\e[0m: a mandatory port number was never set" 1
+    fi
+    local available=$(lsof -i:$1)
+
+    # if port is anuvailable inform user
+    if [ ! -z "$available" ]
+    then
+        echo -e "\e[1;33mWarning: \e[0manother process is running on port $1\nMore specifically:\n$available\n\nStop it?(y/n)"
+        read -n1 resp
+
+        # exit safely if port is not let free
+        if [ "$resp" != "y" ] && [ "$resp" != "Y" ] 
+        then
+            # kill all processes we started before this one & exit succesfully
+            exit_safely
+
+        # kill process in order to use that port, if requested
+        else 
+            fuser -k $1/tcp &> /dev/null
+        fi
+    fi
+
+    # update using port array in order to stop all processes running if requested later on
+    using_ports+=($1)
+}
+
+function shutdown() {
+    # kill a process listening on a certain port
+    fuser -k $1/tcp &> /dev/null
+    local result=$?
+
+    # display a message based on the shutdown result
+    if [ "$result" -eq 0 ] 
+    then
+        echo "Successful $2 shutdown"
+    else 
+        echo "Something went wrong on $2 shutdown"
+    fi
+
+    # update global exit_code variable for this script
+    let exit_code+=$result
+}
+
+function is_file_present(){
+    declare -a properties=("${@:2}")
+
+    # if it is not readable, exit safely
+    if [ -e $1 ] && [ ! -r $1 ]
+    then
+        echo -e "\e[1;31mError\e[0m:\tNot authorized to read file $1\n\tSet"\
+                "another configuration file or get permission.\n\tExiting now..."
+        exit_safely
+     # else if a properties file to be read does not exist
+    elif [ ! -e $1 ] && [ ! -z $properties ]
+    then
+        # ask for permission to create it if it is a property file
+        echo -e "\e[1;33mWarning\e[0m: configuration file '$1' does not exist. Create?(y/n)"
+        ans='n'
+        while read -n1 ans 
+        do
+            if [ "$ans" == 'n' ] || [ "$ans" == 'N' ]
+            then 
+                exit_safely
+            elif [ "$ans" == 'y' ] || [ "$ans" == 'Y' ]
+            then
+                    # let user define properties if this file is a config file
+                    declare -a pairs
+                    is_ok='?'
+
+                    while [ "$is_ok" != 'y' ] && [ "$is_ok" != 'Y' ]
+                    do
+                        echo -e "\nPlease define the following values for the corresponding keys..."
+                        pairs=()
+
+                        # for each key read values from stdin
+                        for key in "${properties[@]}"
+                        do
+                            echo -n "$key="
+                            read value
+                            pairs+=("$key=$(echo $value | tr -d ' ')")
+                        done
+
+                        # ask for confirmation
+                        echo -e "\nIs this ok?(y/n)\n"
+                        echo ${pairs[@]} | tr ' ' '\n'
+                        read -n1 is_ok
+
+                        while [ "$is_ok" != 'y' ] && [ "$is_ok" != 'Y' ] && [ "$is_ok" != 'n' ] && [ "$is_ok" != 'N' ]
+                        do
+                            echo "(y/n)?"
+                            read -n1 is_ok
+                        done
+
+                    done
+
+                    # create configuration file
+                    echo ${pairs[@]} | tr ' ' '\n' > $1
+                    if [ $? -ne 0 ]
+                    then
+                        exit_message "Please rerun script with sudo" 1
+                    fi    
+                return 0
+            else
+                echo -e "\n(y/n)?"
+            fi
+        done 
+    elif [ ! -e $1 ] && [ -z $properties ]
+    then
+        echo -e "\e[1;31mError\e[0m: Mandatory resource under '$1' could not be found"
+        exit_safely
+    fi
+}
+
+
+### Main Part starts here ###
+
+# set up your environment
+ui_port=3000
+api_port=8080
+
+# initialize variables
+declare -a using_ports
+exit_code=0
+
+# read configuration file
+config_file=$1
+if [ -z $config_file ]
+then
+    exit_message "\e[1;31mError\e[0m: No configuration file specified" 1
+fi 
+declare -a props=(frontend backend)
+
+is_file_present $config_file "${props[@]}"
+
+echo "Reading configuration file $config_file..."
+while read line
+do
+    # properties must be configured with a format like: key=value(any whitespaces will be removed)
+    key=$(echo $line | cut -d '=' -f1 | tr -d ' ')
+    value=$(echo $line | cut -d '=' -f2 | tr -d ' ') 
+    eval "$key=$value"
+done < $config_file
+
+# make sure all properties got a value
+for prop in ${props[@]}
+do
+    if [ -z ${!prop} ]
+    then
+        exit_message "\e[1;31mError\e[0m: no value found for property '$prop'\nExiting now..." 1
+    fi
+done
+echo "All properties set successfully."
+
+#start back-end
+is_port_available $api_port
+is_file_present $backend
+cd $backend
+echo "Starting server..."
+mvn spring-boot:run > /dev/null &
+echo "Started server default port-$api_port [$!]..."
+
+# start front-end
+is_port_available $ui_port
+is_file_present $frontend
+cd $frontend
+
+echo "Installing React dependecies..."
+npm install
+echo "Installation finished."
+
+echo "Starting client..."
+npm start > /dev/null &
+echo "Started client on default port-$ui_port [$!]..."
+ui_pid=$!
+
+# display a Quit? message until user quits the app
+echo "Press any key to shut app down..."
+read -n1
+
+# disconnect client
+kill $ui_pid &> /dev/null
+shutdown $ui_port client
+
+# once front end is closed, kill back end as well
+shutdown $api_port server
+
+exit $exit_code
