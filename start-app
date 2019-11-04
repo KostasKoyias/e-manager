@@ -2,6 +2,61 @@
 
 ### Define utility functions to maximize code re-usability on common operations ###
 
+function yes_or_no(){
+
+    # display message for this yes_or_no operation
+    echo -e "$1" # convert special character '#' to '\n'
+    read -n1 yes_or_no
+
+    # ask user for confirmation until 'y' or 'n' is pressed
+    while [ "$yes_or_no" != 'y' ] && [ "$yes_or_no" != 'Y' ] && [ "$yes_or_no" != 'N' ] && [ "$yes_or_no" != 'n' ]
+    do 
+        echo "(y/n)?"
+        read -n1 yes_or_no
+    done
+    if [ "$yes_or_no" == 'y' ] || [ "$yes_or_no" == 'Y' ] 
+    then
+        return 0
+    else
+        return 1
+    fi
+}
+
+
+function define_properties(){
+
+    # let user define properties if this file is a config file
+    declare -a pairs
+    is_ok=1
+
+    while [ $is_ok -ne 0 ]
+    do
+        echo -e "\nPlease define the following values for the corresponding keys..."
+        pairs=()
+
+        # for each key read values from stdin
+        for key in "${@:2}"
+        do
+            echo -n "$key="
+            read value
+            pairs+=("$key=$(echo $value | tr -d ' ')")
+        done
+
+        # ask for confirmation
+        yes_or_no "\nIs this ok?(y/n)\n$(echo ${pairs[@]} | tr ' ' '\n')" 
+        let is_ok=$?
+    done
+
+    # create configuration file
+    echo ${pairs[@]} | tr ' ' '\n' > $1
+    echo "Created or updated configuration file" $1
+    if [ $? -ne 0 ]
+    then
+        exit_message "Please rerun script with sudo" 1
+    fi 
+}
+
+
 function exit_message(){
     echo -e "$1\nPress any key to close this window..."
     read -n1
@@ -81,61 +136,28 @@ function is_file_present(){
     elif [ ! -e $1 ] && [ ! -z $properties ]
     then
         # ask for permission to create it if it is a property file
-        echo -e "\e[1;33mWarning\e[0m: configuration file '$1' does not exist. Create?(y/n)"
-        ans='n'
-        while read -n1 ans 
-        do
-            if [ "$ans" == 'n' ] || [ "$ans" == 'N' ]
-            then 
-                exit_safely
-            elif [ "$ans" == 'y' ] || [ "$ans" == 'Y' ]
-            then
-                    # let user define properties if this file is a config file
-                    declare -a pairs
-                    is_ok='?'
+        yes_or_no "\e[1;33mWarning\e[0m: configuration file '$1' does not exist. Create?(y/n)"
+        if [ $? -eq 1 ]
+        then 
+            exit_safely
+        else
+            define_properties "$config_file" "${properties[@]}"
+            return 1
+        fi
 
-                    while [ "$is_ok" != 'y' ] && [ "$is_ok" != 'Y' ]
-                    do
-                        echo -e "\nPlease define the following values for the corresponding keys..."
-                        pairs=()
-
-                        # for each key read values from stdin
-                        for key in "${properties[@]}"
-                        do
-                            echo -n "$key="
-                            read value
-                            pairs+=("$key=$(echo $value | tr -d ' ')")
-                        done
-
-                        # ask for confirmation
-                        echo -e "\nIs this ok?(y/n)\n"
-                        echo ${pairs[@]} | tr ' ' '\n'
-                        read -n1 is_ok
-
-                        while [ "$is_ok" != 'y' ] && [ "$is_ok" != 'Y' ] && [ "$is_ok" != 'n' ] && [ "$is_ok" != 'N' ]
-                        do
-                            echo "(y/n)?"
-                            read -n1 is_ok
-                        done
-
-                    done
-
-                    # create configuration file
-                    echo ${pairs[@]} | tr ' ' '\n' > $1
-                    if [ $? -ne 0 ]
-                    then
-                        exit_message "Please rerun script with sudo" 1
-                    fi    
-                return 0
-            else
-                echo -e "\n(y/n)?"
-            fi
-        done 
+    # if file does not exist, allow user to re-define paths & properties
     elif [ ! -e $1 ] && [ -z $properties ]
     then
-        echo -e "\e[1;31mError\e[0m: Mandatory resource under '$1' could not be found"
-        exit_safely
+        yes_or_no "\e[1;4;33mWarning\e[0m\nMandatory resource under '$1' could not be found\nWant to re-define properties(y/n)?"
+        if [ $? -eq 1 ]
+        then
+            exit_safely
+        else
+            define_properties "$config_file" "${props[@]}"
+            return 1
+        fi
     fi
+    return 0
 }
 
 
@@ -159,42 +181,64 @@ declare -a props=(frontend backend)
 
 is_file_present $config_file "${props[@]}"
 
-echo "Reading configuration file $config_file..."
-while read line
+# Read configuration file until it is set right
+right=1 # indicates failure
+while [ $right -ne 0 ]
 do
-    # properties must be configured with a format like: key=value(any whitespaces will be removed)
-    key=$(echo $line | cut -d '=' -f1 | tr -d ' ')
-    value=$(echo $line | cut -d '=' -f2 | tr -d ' ') 
-    eval "$key=$value"
-done < $config_file
+    let right=0
+    echo "Reading configuration file $config_file..."
+    while read line
+    do
+        # properties must be configured with a format like: key=value(any whitespaces will be removed)
+        key=$(echo $line | cut -d '=' -f1 | tr -d ' ')
+        value=$(echo $line | cut -d '=' -f2 | tr -d ' ') 
+        eval "$key=$value"
+    done < $config_file
 
-# make sure all properties got a value
-for prop in ${props[@]}
-do
-    if [ -z ${!prop} ]
+    # make sure all properties got a value
+    for prop in ${props[@]}
+    do
+        if [ -z ${!prop} ]
+        then
+            exit_message "\e[1;31mError\e[0m: no value found for property '$prop'\nExiting now..." 1
+        fi
+    done
+    echo "All properties set successfully."
+
+    # make sure properties where set right
+    is_file_present $backend 
+    if [ $? -eq 1 ]
     then
-        exit_message "\e[1;31mError\e[0m: no value found for property '$prop'\nExiting now..." 1
+        right=1
+        continue
     fi
+    is_file_present $frontend
+    right=$?
 done
-echo "All properties set successfully."
+echo "Starting processes..."
 
 #start back-end
-is_port_available $api_port
-is_file_present $backend
 cd $backend
+is_port_available $api_port
 echo "Starting server..."
 mvn spring-boot:run > /dev/null &
 echo "Started server default port-$api_port [$!]..."
 
 # start front-end
-is_port_available $ui_port
-is_file_present $frontend
 cd $frontend
 
+# make sure all dependencies are listed in package.json & install if not up-to-date
+ls package.json >& /dev/null
+if [ $? -ne 0 ]
+then
+    echo -e "\e[1;31mError\e[0m: no package.json found"
+    exit_safely
+fi
 echo "Installing React dependecies..."
 npm install
 echo "Installation finished."
 
+is_port_available $ui_port
 echo "Starting client..."
 npm start > /dev/null &
 echo "Started client on default port-$ui_port [$!]..."
