@@ -221,7 +221,7 @@ echo "Starting processes..."
 cd $backend
 is_port_available $api_port
 echo "Starting server..."
-mvn spring-boot:run > /dev/null &
+./gradlew bootRun > /dev/null &
 echo "Started server default port-$api_port [$!]..."
 
 # start front-end
