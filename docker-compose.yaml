@@ -1,0 +1,58 @@
+version: '3.7'
+
+services:
+
+  # Database Management System (MySQL)
+  mysql_host:
+    image: mysql:8.0
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+      - MYSQL_DATABASE=e_manager
+      - MYSQL_USER=user
+      - MYSQL_PASSWORD=password
+    ports:
+      - 3306:3306
+    networks: 
+      - backend
+
+  # Backend Service (Spring)
+  server:
+    build:
+      context: e-manager_api
+      dockerfile: Dockerfile
+    restart: on-failure
+    depends_on:
+      - mysql_host
+    ports:
+      - 8080:8080
+    environment:
+      - DATABASE_HOST=mysql_host
+      - DATABASE_USER=user
+      - DATABASE_PASSWORD=password
+      - DATABASE_NAME=e_manager
+      - DATABASE_PORT=3306
+    networks: 
+      - frontend
+      - backend
+
+  # Frontend Service (React)
+  ui:
+    tty: true
+    build:
+      context: e-manager_ui
+      dockerfile: Dockerfile
+    ports:
+      - "9090:3000" # Forward the exposed port 3000 on the container to port 9090 on the host machine
+    depends_on:
+      - server
+    networks:
+      - frontend  
+  
+# Volumes
+volumes:
+  db-data:
+
+# Networks to be created to facilitate communication between containers
+networks:
+  backend:
+  frontend:   
